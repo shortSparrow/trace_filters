@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<body style="background: #1a1a1a; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh;">
+    <canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const RADIUS = 80;
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = 'https://picsum.photos/id/28/1000/700';
+
+    img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        // 1. Малюємо оригінальне зображення як фоновий шар
+        const offscreenCanvas = document.createElement('canvas');
+        offscreenCanvas.width = img.width;
+        offscreenCanvas.height = img.height;
+        const offCtx = offscreenCanvas.getContext('2d');
+        offCtx.drawImage(img, 0, 0);
+
+        // Отримуємо сирі пікселі (RGBA)
+        const srcData = offCtx.getImageData(0, 0, img.width, img.height);
+        
+        let mouseX = -1000, mouseY = -1000;
+
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = Math.floor(e.clientX - rect.left);
+            mouseY = Math.floor(e.clientY - rect.top);
+            renderLens(mouseX, mouseY);
+        });
+
+        function renderLens(mX, mY) {
+            // Спочатку малюємо чисте зображення
+            ctx.drawImage(offscreenCanvas, 0, 0);
+
+            // Визначаємо область для оновлення (квадрат навколо миші)
+            const startX = Math.max(0, mX - RADIUS - 2);
+            const startY = Math.max(0, mY - RADIUS - 2);
+            const endX = Math.min(img.width, mX + RADIUS + 2);
+            const endY = Math.min(img.height, mY + RADIUS + 2);
+            const width = endX - startX;
+            const height = endY - startY;
+
+            if (width <= 0 || height <= 0) return;
+
+            const outputData = ctx.getImageData(startX, startY, width, height);
+            const outPixels = outputData.data;
+            const srcPixels = srcData.data;
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const currentX = startX + x;
+                    const currentY = startY + y;
+
+                    const dx = currentX - mX;
+                    const dy = currentY - mY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    const outIndex = (y * width + x) * 4;
+
+                    // Зона всередині лінзи
+                    if (dist < RADIUS) {
+                        const normDist = dist / RADIUS; // нормалізували відстань, щоб вона завжди була від 0 до 1, як відсотки
+
+                        /**
+                         * 1. Сферичний прогин
+                         * Якщо замість 1 - Math.sqrt(...) поставити 5 - Math.sqrt(...) то у лінзі отримаємо перевернете
+                         * зображення, тому що нижче коли ми рахуємо sampleX та sampleY у нас є коефіцієнт 0.5 на який
+                         * ми множимо distortion, і там тоді значення будуть виходити у двічі більшими, раніше ми завжди мали
+                         * додатні значення (1 - 0.5 * 1 = +0.5), а тепер вони стають від'ємними (1 - 0.5 * 4 = -1.25).
+                         * І відповідно відбувається інвертування, верх стає низом, а низ верхом, а ліва сторона правою і права
+                         * лівою.
+                         */
+                        const distortion = 1 - Math.sqrt(1 - normDist * normDist);
+
+                        /**
+                         * Проблема з пікселізацією полягала в тому, що якщо отримуються дробові координати, то вони
+                         * просто округлювалися через math.round() і різні дробові координати могли попадати в один
+                         * піксель, що створювало східчасту картину. Але зараз замість цього ми при отриманні дробової
+                         * координати ми побудуємо такий собі прямокутник. Нехай у нас координата (10.3, 20.7), тоді
+                         * побудуємо навколо неї прямокутник, де x0 це ліва межа (округлили нашу координату) x0 = 10,
+                         * а x0+1=x1 - права межа (x1=11)
+                         * 
+                         * (x0, y0) = (10, 20)  ───────  (x1, y0) = (11, 20)
+                         *        │                            │
+                         *        |                            |
+                         *        │     • (10.3, 20.7)         │
+                         *        │                            │
+                         *  (x0, y1) = (10, 21)  ───────  (x1, y1) = (11, 21)
+                         *
+                         * Тепер наша координата ніби у прямокутнику з цілих значень і ми можемо подивитися наскільки
+                         * вона близько до кожної із сторін, і ми можемо обчислити відносні зміщення (fx, fy)
+                         * 
+                         * const fx = sampleX - x0; // 10.3 - 10 = 0.3
+                         * const fy = sampleY - y0; // 20.7 - 20 = 0.7
+                         * 
+                         * Ці зміщення виражають дробову частину (від 0.0 до 1.0):
+                         * fx = 0.3 означає: точна точка лежить на 30% від лівого краю і на 70% від правого.
+                         * fy = 0.7 означає: точка лежить на 70% від верхнього краю і на 30% від нижнього.
+                         * 
+                         * Після цього беремо ці 4 сусідні пікселі і рахуємо їх зважену суму, щоб обрати середній
+                         * колір:
+                         *  const i00 - лівий верхній піксель
+                         *  const i10 - правий верхній піксель
+                         *  const i01 - лівий нижній піксель
+                         *  const i11 - правий нижній піксель
+                         * 
+                         * const top = srcPixels[i00 + c] * (1 - fx) + srcPixels[i10 + c] * fx; // суміш верхніх пікселів
+                         * const bottom = srcPixels[i01 + c] * (1 - fx) + srcPixels[i11 + c] * fx; // суміш нижніх пікселів
+                         * const color = top * (1 - fy) + bottom * fy; // підсумкове зведення
+                         * 
+                         * Оскільки точна точка знаходиться ближче до (10.3, 20.7), найбільший ваговий внесок зробить саме 
+                         * лівий нижній піксель i01 (координата 10, 21).
+                         * 
+                         * Чому в одному місці * (1-fx), а в іншому просто * fx
+                         * top = Pixel_00 * (1 - fx) + Pixel_10 * fx
+                         * 
+                         * Коли ми знаходимося між лівим пікселем X_0 (де fx = 0) та правим X_1 (де fx = 1), значення fx
+                         * показує, наскільки далеко ми відійшли від лівого пікселя в бік правого:Якщо fx = 0.3, це означає, що
+                         * ми пройшли 30% шляху до правого пікселя.Відповідно, до лівого пікселя нам залишається 70% відстані
+                         * (1 - 0.3 = 0.7).
+                         * 
+                         * 
+                         * Тобто грубо кажучи ми взяли точку, вона має дробову координату, тому ми взяли 4 її сусідні
+                         * пікселі, і враховуючи вагу кожного сусіднього пікселя порахували середній колір.
+                         */
+
+                        // 2. Дробові координати звідки беремо піксель
+                        const sampleX = Math.min(Math.max(0, currentX - dx * distortion * 0.5), img.width - 1);
+                        const sampleY = Math.min(Math.max(0, currentY - dy * distortion * 0.5), img.height - 1);
+                        
+                        // 3. Білінійна інтерполяція (знаходимо 4 цілі сусідні координати)
+                        const x0 = Math.floor(sampleX); // верхня ліва межа
+                        const x1 = Math.min(x0 + 1, img.width - 1); // верхня права межа
+                        const y0 = Math.floor(sampleY); // нижня ліва межа
+                        const y1 = Math.min(y0 + 1, img.height - 1); // нижня права межа
+
+                        const fx = sampleX - x0; // відносне зміщення між цілими пікселями по x від 0 до 1, наприклад 0.3 
+                        const fy = sampleY - y0; // відносне зміщення між цілими пікселями по y від 0 до 1, наприклад 0.7
+
+                        // Знаходження індексів в одновимірному масиві srcPixels (У Canvas дані пікселів зберігаються в
+                        // 1D-масиві Uint8ClampedArray, де кожний піксель займає 4 послідовні елементи (R, G, B, A))
+                        // Візьмемо Індекси 4 сусідів
+                        const i00 = (y0 * img.width + x0) * 4; // лівий верхній піксель
+                        const i10 = (y0 * img.width + x1) * 4; // правий верхній піксель
+                        const i01 = (y1 * img.width + x0) * 4; // лівий нижній піксель
+                        const i11 = (y1 * img.width + x1) * 4; // правий нижній піксель
+
+                        // Зважування та зведення RGB каналів (c - це RGB, c=0 - red, c=1 - green, c=2 - blue)
+                        // Замість того щоб вибрати один найближчий піксель, алгоритм бере зважену суму всіх 4-х пікселів:
+                        for (let c = 0; c < 3; c++) {
+                            const top = srcPixels[i00 + c] * (1 - fx) + srcPixels[i10 + c] * fx; // суміш верхніх пікселів
+                            const bottom = srcPixels[i01 + c] * (1 - fx) + srcPixels[i11 + c] * fx; // суміш нижніх пікселів
+                            const color = top * (1 - fy) + bottom * fy; // підсумкове зведення
+
+                            outPixels[outIndex + c] = color;
+                        }
+                        outPixels[outIndex + 3] = 255;
+
+                        // 4. Згладжування контуру лінзи на краях (Anti-aliasing)
+                        // Оскільки у нас є обводка, то воа це закриває і нам це не треба, але якби у нас не було би
+                        // білої обводки то треба додати це, щоб на краях по колу не було сходинок. Робимо плавний розмитий
+                        //  перехід шириною в 1.5 пікселі
+                        if (dist > RADIUS - 1.5) {
+                            const edgeAlpha = (RADIUS - dist) / 1.5; // Ця формула рахує, наскільки піксель близький до зовнішньої межі лінзи, і дає значення від 1.0 до 0.0
+                            const origIndex = (currentY * img.width + currentX) * 4;
+
+                            // Тут відбувається змішування двох кольорів для кожного з RGB-каналів (c=0,1,2):
+                            // FinalColor = (Лінза * edgeAlpha) + (Фон * (1 - edgeAlpha))
+                            for (let c = 0; c < 3; c++) {
+                                outPixels[outIndex + c] = outPixels[outIndex + c] * edgeAlpha + srcPixels[origIndex + c] * (1 - edgeAlpha);
+                            }
+                        }
+                    }
+ 
+                }
+            }
+
+            // 1. Малюємо оброблені пікселі назад на канвас
+            ctx.putImageData(outputData, startX, startY);
+
+            // 2. Векторне малювання білої обводки навколо лінзи з апаратним згладжуванням (Anti-Aliasing)
+            ctx.beginPath();
+            ctx.arc(mX, mY, RADIUS, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // Початковий рендер
+        ctx.drawImage(offscreenCanvas, 0, 0);
+    };
+</script>
+</body>
+</html>

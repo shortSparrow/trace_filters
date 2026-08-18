@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<body style="background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; overflow: hidden;">
+
+<canvas id="displayCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('displayCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const offCanvas = document.createElement('canvas');
+const offCtx = offCanvas.getContext('2d');
+
+const RADIUS = 80; // Збільшив для наочності
+const DIAMETER = RADIUS * 2;
+// Налаштування БОРДЕРА
+const BORDER_COLOR = 'white'; 
+const BORDER_WIDTH = 2;
+
+let prevX = 0, prevY = 0;
+
+// Ядро Гауса 5x5 (залишаємо те саме, сильне)
+const kernel = [
+    1/256,  4/256,  6/256,  4/256, 1/256,
+    4/256, 16/256, 24/256, 16/256, 4/256,
+    6/256, 24/256, 36/256, 24/256, 6/256,
+    4/256, 16/256, 24/256, 16/256, 4/256,
+    1/256,  4/256,  6/256,  4/256, 1/256
+];
+const kernelSize = 5;
+
+const img = new Image();
+img.crossOrigin = "anonymous";
+img.src = 'https://picsum.photos/id/15/800/600'; // Інше фото для різноманітності
+
+img.onload = () => {
+    canvas.width = offCanvas.width = img.width;
+    canvas.height = offCanvas.height = img.height;
+    offCtx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0);
+};
+
+// --- ФУНКЦІЯ ГАУСОВОГО БЛЮРУ (без змін) ---
+function applyGaussianBlur(x, y) {
+    const padding = Math.floor(kernelSize / 2); 
+    const fetchSize = DIAMETER + (padding * 2);
+    const sourceData = offCtx.getImageData(x - RADIUS - padding, y - RADIUS - padding, fetchSize, fetchSize);
+    const src = sourceData.data;
+    
+    const outputData = ctx.createImageData(DIAMETER, DIAMETER);
+    const dst = outputData.data;
+
+    for (let ly = 0; ly < DIAMETER; ly++) {
+        for (let lx = 0; lx < DIAMETER; lx++) {
+            
+            const dx = lx - RADIUS;
+            const dy = ly - RADIUS;
+
+            if (dx * dx + dy * dy <= RADIUS * RADIUS) {
+                let r = 0, g = 0, b = 0;
+
+                for (let ky = 0; ky < kernelSize; ky++) {
+                    for (let kx = 0; kx < kernelSize; kx++) {
+                        const sx = lx + kx;
+                        const sy = ly + ky;
+                        const srcIdx = (sy * fetchSize + sx) * 4;
+                        const weight = kernel[ky * kernelSize + kx];
+
+                        r += src[srcIdx] * weight;
+                        g += src[srcIdx + 1] * weight;
+                        b += src[srcIdx + 2] * weight;
+                    }
+                }
+
+                const dstIdx = (ly * DIAMETER + lx) * 4;
+                dst[dstIdx] = r;
+                dst[dstIdx + 1] = g;
+                dst[dstIdx + 2] = b;
+                dst[dstIdx + 3] = 255; 
+            } else { // якщо у межах квадрату (бо getImageData() повертає квадрат), але поза колом то копіюємо оригінальні пікселі 
+                const srcIdx = ((ly + padding) * fetchSize + (lx + padding)) * 4;
+                const dstIdx = (ly * DIAMETER + lx) * 4;
+                dst[dstIdx] = src[srcIdx];
+                dst[dstIdx + 1] = src[srcIdx+1];
+                dst[dstIdx + 2] = src[srcIdx+2];
+                dst[dstIdx + 3] = src[srcIdx+3];
+            }
+        }
+    }
+    return outputData;
+}
+// ------------------------------------------
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // ВІДНОВЛЕННЯ ОРИГІНАЛУ
+    // Стираємо область, трохи більшу, щоб захопити і товщину бордера
+    const cleanRadius = RADIUS + (BORDER_WIDTH / 2) + 1;
+    const cleanDiameter = cleanRadius * 2;
+    const srcX = prevX - cleanRadius;
+    const srcY = prevY - cleanRadius;
+    ctx.drawImage(
+        offCanvas, 
+        srcX, srcY, cleanDiameter, cleanDiameter, // Звідки вирізаємо на offCanvas
+        srcX, srcY, cleanDiameter, cleanDiameter  // Куди вставляємо на основному canvas
+    );
+
+    // НАКЛАДАННЯ БЛЮРУ
+    const blurredData = applyGaussianBlur(x, y);
+    ctx.putImageData(blurredData, x - RADIUS, y - RADIUS);
+
+    // --- МАЛЮВАННЯ БОРДЕРА (ВЕКТОРНО) ---
+    ctx.beginPath();
+    // Малюємо коло по центру курсора
+    ctx.arc(x, y, RADIUS, 0, Math.PI * 2);
+    
+    // Налаштування стилю лінії
+    ctx.lineWidth = BORDER_WIDTH;
+    ctx.strokeStyle = BORDER_COLOR;
+    
+    // Малюємо саму лінію
+    ctx.stroke();
+    ctx.closePath();
+    // ------------------------------------
+
+    prevX = x;
+    prevY = y;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<body style="background: #1a1a1a; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh;">
+    <canvas id="gpuCanvas"></canvas>
+
+<script type="module">
+    const canvas = document.getElementById('gpuCanvas');
+    const ctx = canvas.getContext('webgpu');
+
+    if (!navigator.gpu) {
+        alert("WebGPU не підтримується вашим браузером.");
+    }
+
+    const RADIUS = 80;
+
+    async function init() {
+        const adapter = await navigator.gpu.requestAdapter();
+        const device = await adapter.requestDevice();
+
+        const response = await fetch('https://picsum.photos/id/28/1000/700');
+        const blob = await response.blob();
+        const imgBitmap = await createImageBitmap(blob);
+
+        canvas.width = imgBitmap.width;
+        canvas.height = imgBitmap.height;
+
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+        // Створення текстури з картинки
+        const texture = device.createTexture({
+            size: [imgBitmap.width, imgBitmap.height],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+        device.queue.copyExternalImageToTexture({ source: imgBitmap }, { texture }, [imgBitmap.width, imgBitmap.height]);
+
+        // Шейдер (WGSL)
+const shaderModule = device.createShaderModule({
+    code: `
+        struct Uniforms {
+            mouse: vec2<f32>,
+            radius: f32,
+            canvasSize: vec2<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> ui : Uniforms;
+        @group(0) @binding(1) var s : sampler;
+        @group(0) @binding(2) var t : texture_2d<f32>;
+
+        struct VertexOutput {
+            @builtin(position) pos : vec4<f32>,
+            @location(0) uv : vec2<f32>,
+        };
+
+        @vertex
+        fn vert_main(@builtin(vertex_index) idx : u32) -> VertexOutput {
+            var pos = array<vec2<f32>, 4>(
+                vec2(-1.0,  1.0), vec2(1.0,  1.0),
+                vec2(-1.0, -1.0), vec2(1.0, -1.0)
+            );
+            var uv = array<vec2<f32>, 4>(
+                vec2(0.0, 0.0), vec2(1.0, 0.0),
+                vec2(0.0, 1.0), vec2(1.0, 1.0)
+            );
+            var out : VertexOutput;
+            out.pos = vec4<f32>(pos[idx], 0.0, 1.0);
+            out.uv = uv[idx];
+            return out;
+        }
+
+        @fragment
+        fn frag_main(in : VertexOutput) -> @location(0) vec4<f32> {
+            let pixelPos = in.uv * ui.canvasSize;
+            let toMouse = pixelPos - ui.mouse;
+            let dist = length(toMouse);
+            
+            // Базовий колір фону поза склом
+            let baseColor = textureSampleLevel(t, s, in.uv, 0.0);
+
+            if (dist < ui.radius) {
+                // 1. Нормалізація дистанції від центру (0 - центр, 1 - край) 
+                let normalizedDist = dist / ui.radius;
+                
+                // 2. Розрахунок вектору нормалі (напрямок викривлення)
+                let normal = normalize(toMouse);
+                
+                // 3. Математика лінзи: створюємо сферичне викривлення (refraction) 
+                // Чим ближче до краю, тим сильніше заломлення
+                let distortion = 1.0 - sqrt(1.0 - pow(normalizedDist, 2.0));
+                let refractPower = 0.05 * distortion; // Сила заломлення
+
+                // 4. Хроматична аберація: зсуваємо канали R та B окремо
+                let aberration = 0.01 * normalizedDist; 
+                
+                let uvR = in.uv - normal * (refractPower + aberration);
+                let uvG = in.uv - normal * refractPower;
+                let uvB = in.uv - normal * (refractPower - aberration);
+
+                var color : vec3<f32>;
+                color.r = textureSampleLevel(t, s, uvR, 0.0).r;
+                color.g = textureSampleLevel(t, s, uvG, 0.0).g;
+                color.b = textureSampleLevel(t, s, uvB, 0.0).b;
+
+                // 5. Specular Highlight (Світловий відблиск на краях)
+                // Імітуємо джерело світла зверху-зліва
+                let lightDir = normalize(vec2<f32>(-1.0, -1.0));
+                let rim = max(0.0, dot(normal, lightDir));
+                let highlight = pow(rim, 15.0) * smoothstep(0.7, 1.0, normalizedDist);
+                
+                // 6. Фінальне змішування: додаємо легке затемнення (tint) та відблиск 
+                let tintedColor = color * 0.95; 
+                return vec4<f32>(tintedColor + highlight * 0.5, 1.0);
+            }
+            
+            // Тонка біла лінія на межі для чіткості
+            if (dist < ui.radius + 1.5) {
+                return vec4<f32>(1.0, 1.0, 1.0, 0.3);
+            }
+
+            return baseColor;
+        }
+    `
+});
+        // Pipeline
+        const pipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: shaderModule, entryPoint: 'vert_main' },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'frag_main',
+                targets: [{ format }]
+            },
+            primitive: { topology: 'triangle-strip' }
+        });
+
+        // Буфер для координат миші
+        const uniformBuffer = device.createBuffer({
+            size: 32,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+        const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: uniformBuffer } },
+                { binding: 1, resource: sampler },
+                { binding: 2, resource: texture.createView() }
+            ]
+        });
+
+        let mouseX = -1000, mouseY = -1000;
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        function render() {
+            const uniformData = new Float32Array([mouseX, mouseY, RADIUS, 0, canvas.width, canvas.height, 0, 0]);
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginRenderPass({
+                colorAttachments: [{
+                    view: ctx.getCurrentTexture().createView(),
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                    loadOp: 'clear',
+                    storeOp: 'store'
+                }]
+            });
+
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.draw(4);
+            passEncoder.end();
+
+            device.queue.submit([commandEncoder.finish()]);
+            requestAnimationFrame(render);
+        }
+
+        render();
+    }
+
+    init();
+</script>
+</body>
+</html>

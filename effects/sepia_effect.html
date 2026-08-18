@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<body style="background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+
+<canvas id="displayCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('displayCanvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+// Прихований канвас для зберігання оригіналу
+const offscreenCanvas = document.createElement('canvas');
+const offCtx = offscreenCanvas.getContext('2d');
+
+const img = new Image();
+img.crossOrigin = "anonymous"; // Щоб уникнути проблем з CORS
+img.src = 'https://picsum.photos/800/600'; // Випадкове фото для тесту
+
+// Наша матриця (наприклад, посилення червоного та ефект сепії)
+// Формат: [r1, r2, r3, g1, g2, g3, b1, b2, b3]
+const matrix = [
+    1.5, 0.2, 0.2,
+    0.1, 1.0, 0.1,
+    0.1, 0.1, 0.8
+];
+
+const RADIUS = 60;
+const DIAMETER = RADIUS * 2;
+
+img.onload = () => {
+    canvas.width = offscreenCanvas.width = img.width;
+    canvas.height = offscreenCanvas.height = img.height;
+    
+    // Малюємо оригінал на обидва канваси
+    offCtx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0);
+};
+
+let prevX = 0, prevY = 0;
+
+canvas.addEventListener('mousemove', (e) => {
+    // Очистка попереднього значення
+    const cleanData = offCtx.getImageData(prevX - RADIUS, prevY - RADIUS, DIAMETER, DIAMETER);
+    ctx.putImageData(cleanData, prevX - RADIUS, prevY - RADIUS);
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // 1. Отримуємо координати квадрата навколо курсора
+    const startX = Math.floor(mouseX - RADIUS);
+    const startY = Math.floor(mouseY - RADIUS);
+
+    // Запам'ятовуємо поточне значення курсора, щоб потім його зачистити
+    prevX = mouseX;
+    prevY = mouseY;
+    
+
+    // 2. Беремо "чисті" пікселі з прихованого канвасу
+    const imageData = offCtx.getImageData(startX, startY, DIAMETER, DIAMETER);
+    const pixels = imageData.data; // Масив [R, G, B, A, R, G, B, A...]
+    console.log('pixels: ', pixels)
+    // 3. Проходимо по кожному пікселю
+    for (let i = 0; i < pixels.length; i += 4) {
+        // Локальні координати всередині масиву imageData
+        const pxIdx = i / 4;
+        const localX = pxIdx % DIAMETER;
+        const localY = Math.floor(pxIdx / DIAMETER);
+        
+        // Перевірка, чи піксель знаходиться всередині КОЛА (дистанція до центру)
+        const dx = localX - RADIUS;
+        const dy = localY - RADIUS;
+        
+        if (dx*dx + dy*dy <= RADIUS*RADIUS) {
+            const r = pixels[i];
+            const g = pixels[i+1];
+            const b = pixels[i+2];
+
+            // Множення на матрицю (спрощений вигляд)
+            pixels[i]   = r * matrix[0] + g * matrix[1] + b * matrix[2]; // Red
+            pixels[i+1] = r * matrix[3] + g * matrix[4] + b * matrix[5]; // Green
+            pixels[i+2] = r * matrix[6] + g * matrix[7] + b * matrix[8]; // Blue
+            // pixels[i+3] - альфа канал залишаємо без змін
+        }
+    }
+
+    // 4. Очищуємо стару ділянку (малюємо оригінал поверх)
+    // В нашому випадку putImageData просто затре стару змінену ділянку
+    ctx.putImageData(imageData, startX, startY);
+});
+
+</script>
+</body>
+</html>

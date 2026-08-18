@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trace Filters</title>
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --accent-cpu: #3b82f6;
+            --accent-gpu: #10b981;
+            --border-color: #e2e8f0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 60px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .header {
+            text-align: center;
+            max-width: 600px;
+            margin-bottom: 50px;
+        }
+
+        h1 {
+            font-size: 2.6rem;
+            font-weight: 800;
+            margin: 0 0 12px 0;
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1300px;
+            width: 100%;
+        }
+
+        .responsive-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 20px;
+        }
+
+        .list-item {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            text-decoration: none;
+            color: inherit;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02), 0 1px 2px rgba(0, 0, 0, 0.04);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .list-item:hover {
+            transform: translateY(-4px);
+            border-color: #cbd5e1;
+            box-shadow: 0 12px 20px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.06);
+        }
+
+        .item-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .badge {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .list-item.cpu-item .badge {
+            background-color: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #dbeafe;
+        }
+
+        .list-item.gpu-item .badge {
+            background-color: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #d1fae5;
+        }
+
+        .item-text h2 {
+            margin: 0 0 8px 0;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .item-text p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+
+        .action-arrow {
+            font-size: 1.2rem;
+            font-weight: 600;
+            align-self: flex-end;
+            margin-top: 16px;
+            transition: transform 0.2s ease;
+        }
+
+        .list-item.cpu-item .action-arrow { color: var(--accent-cpu); }
+        .list-item.gpu-item .action-arrow { color: var(--accent-gpu); }
+
+        .list-item:hover .action-arrow {
+            transform: translateX(4px);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Trace Filters</h1>
+        <p class="subtitle">Інтерактивна лабораторія графіки: матрична згортка, WebGPU шейдери та оптичні ефекти</p>
+    </div>
+
+    <div class="container">
+        <div class="responsive-grid">
+            
+            <!-- CPU Sepia Matrix -->
+            <a href="./effects/sepia_effect.html" class="list-item cpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">Color Matrix</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Sepia & Red Overlay (CPU)</h2>
+                        <p>Трансформація кольору пікселів у колі курсора шляхом множення каналів RGB на кастомну матрицю ефекту сепії.</p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+            <!-- CPU Blur -->
+            <a href="./effects/blur/blur.html" class="list-item cpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">Canvas 2D</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Gaussian Blur (CPU)</h2>
+                        <p>Класичне розмиття 5x5 через пряму маніпуляцію масивом пікселів ImageData в радіусі курсора.</p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+            <!-- CPU Iterations -->
+            <a href="./effects/blur/blur_with_iterations.html" class="list-item cpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">Multi-pass</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Multi-pass Blur (CPU)</h2>
+                        <p>Послідовні ітерації згортки над локальним буфером для досягнення глибокого ефекту розмиття.</p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+
+            <!-- WebGPU Blur -->
+            <a href="./effects/blur/blur_web_gpu.html" class="list-item gpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">WebGPU</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Gaussian Blur (GPU)</h2>
+                        <p>Апаратно прискорене розмиття на мові WGSL з використанням швидких текстурних семплерів відеокарти.</p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+            <a href="./effects/lens/lens_base.html" class="list-item gpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">Базова лінза</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Base lens</h2>
+                        <p>Базова лінза: Показує просту реалізацію лінзи, лише заломлення пікселів. Плавного градієнта не буде. буде ефект піксельності<p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+            <a href="./effects/lens/lens_base_gradient.html" class="list-item gpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">Базова лінза з градієнтом</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Base gradient lens</h2>
+                        <p>Базова лінза з градієнтом: Показує просту реалізацію лінзи, лише заломлення пікселів, але вже із плавним переходом<p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+            <!-- WebGPU Lens -->
+            <a href="./effects/lens/lens_web_gpu.html" class="list-item gpu-item">
+                <div>
+                    <div class="item-header">
+                        <span class="badge">WGSL Shader</span>
+                    </div>
+                    <div class="item-text">
+                        <h2>Refraction Lens (GPU)</h2>
+                        <p>Симуляція скляної лінзи: сферичне заломлення координат, хроматична аберація та глянцеві відблиски.</p>
+                    </div>
+                </div>
+                <span class="action-arrow">&rarr;</span>
+            </a>
+
+        </div>
+    </div>
+
+</body>
+</html>

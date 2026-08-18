@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<body style="background: #1a1a1a; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh;">
+    <canvas id="gpuCanvas"></canvas>
+
+<script type="module">
+    const canvas = document.getElementById('gpuCanvas');
+    const ctx = canvas.getContext('webgpu');
+
+    if (!navigator.gpu) {
+        alert("WebGPU не підтримується вашим браузером.");
+    }
+
+    const RADIUS = 80;
+
+    async function init() {
+        const adapter = await navigator.gpu.requestAdapter();
+        const device = await adapter.requestDevice();
+
+        const response = await fetch('https://picsum.photos/id/28/1000/700');
+        const blob = await response.blob();
+        const imgBitmap = await createImageBitmap(blob);
+
+        canvas.width = imgBitmap.width;
+        canvas.height = imgBitmap.height;
+
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+        // Створення текстури з картинки
+        const texture = device.createTexture({
+            size: [imgBitmap.width, imgBitmap.height],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+        device.queue.copyExternalImageToTexture({ source: imgBitmap }, { texture }, [imgBitmap.width, imgBitmap.height]);
+
+        // Шейдер (WGSL)
+const shaderModule = device.createShaderModule({
+    code: `
+        struct Uniforms {
+            mouse: vec2<f32>,
+            radius: f32,
+            canvasSize: vec2<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> ui : Uniforms;
+        @group(0) @binding(1) var s : sampler;
+        @group(0) @binding(2) var t : texture_2d<f32>;
+
+        struct VertexOutput {
+            @builtin(position) pos : vec4<f32>,
+            @location(0) uv : vec2<f32>,
+        };
+
+        @vertex
+        fn vert_main(@builtin(vertex_index) idx : u32) -> VertexOutput {
+            var pos = array<vec2<f32>, 4>(
+                vec2(-1.0,  1.0), vec2(1.0,  1.0),
+                vec2(-1.0, -1.0), vec2(1.0, -1.0)
+            );
+            var uv = array<vec2<f32>, 4>(
+                vec2(0.0, 0.0), vec2(1.0, 0.0),
+                vec2(0.0, 1.0), vec2(1.0, 1.0)
+            );
+            var out : VertexOutput;
+            out.pos = vec4<f32>(pos[idx], 0.0, 1.0);
+            out.uv = uv[idx];
+            return out;
+        }
+
+        // Використовуємо textureSampleLevel, щоб уникнути помилки Uniform Control Flow
+        fn gaussianBlur(uv: vec2<f32>) -> vec4<f32> {
+            var col = vec4<f32>(0.0);
+            let kernel = array<f32, 5>(0.06136, 0.24477, 0.38774, 0.24477, 0.06136);
+            let step = 1.5 / ui.canvasSize; 
+
+            for (var i = -2; i <= 2; i++) {
+                for (var j = -2; j <= 2; j++) {
+                    let sampleUv = uv + vec2<f32>(f32(i), f32(j)) * step;
+                    // textureSampleLevel працює всередині IF без проблем
+                    col += textureSampleLevel(t, s, sampleUv, 0.0) * (kernel[i+2] * kernel[j+2]);
+                }
+            }
+            return col;
+        }
+
+        @fragment
+        fn frag_main(in : VertexOutput) -> @location(0) vec4<f32> {
+            let pixelPos = in.uv * ui.canvasSize;
+            let dist = distance(pixelPos, ui.mouse);
+            
+            // Спочатку беремо основний колір (поза умовою, або через Level)
+            let baseColor = textureSampleLevel(t, s, in.uv, 0.0);
+
+            if (dist < ui.radius) {
+                return gaussianBlur(in.uv);
+            }
+            
+            if (dist < ui.radius + 2.0) {
+                return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+            }
+
+            return baseColor;
+        }
+    `
+});
+        // Pipeline
+        const pipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: shaderModule, entryPoint: 'vert_main' },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'frag_main',
+                targets: [{ format }]
+            },
+            primitive: { topology: 'triangle-strip' }
+        });
+
+        // Буфер для координат миші
+        const uniformBuffer = device.createBuffer({
+            size: 32,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+        const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: { buffer: uniformBuffer } },
+                { binding: 1, resource: sampler },
+                { binding: 2, resource: texture.createView() }
+            ]
+        });
+
+        let mouseX = -1000, mouseY = -1000;
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        function render() {
+            const uniformData = new Float32Array([mouseX, mouseY, RADIUS, 0, canvas.width, canvas.height, 0, 0]);
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+            const commandEncoder = device.createCommandEncoder();
+            const passEncoder = commandEncoder.beginRenderPass({
+                colorAttachments: [{
+                    view: ctx.getCurrentTexture().createView(),
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                    loadOp: 'clear',
+                    storeOp: 'store'
+                }]
+            });
+
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            passEncoder.draw(4);
+            passEncoder.end();
+
+            device.queue.submit([commandEncoder.finish()]);
+            requestAnimationFrame(render);
+        }
+
+        render();
+    }
+
+    init();
+</script>
+</body>
+</html>
