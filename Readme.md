@@ -4,6 +4,8 @@ An interactive playground demonstrating real-time image processing, matrix convo
 
 The core concept: there is an image and a specific area (a circle) attached to the cursor. Within this area, a dynamic image transformation takes place (such as blur, a lens effect, or a sepia filter). As the cursor moves, the interactive area follows it—applying the effect to everything inside the radius while restoring everything outside to its original state.
 
+[Check effects you can here](https://shortsparrow.github.io/trace_filters/)
+
 ## 🚀 Modules & Features
 
 ### 1. CPU-Based Filters (Canvas 2D)
